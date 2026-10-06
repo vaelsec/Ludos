@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/
+exports/
+reviews/
+.garmin_tokens/
+*.db
+*.fit
+*.zip
+context/context.md

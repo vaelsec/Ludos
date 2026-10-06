@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ludos</title>
+<script src="/static/chart.umd.js"></script>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1c1c1a;--mute:#6b6b66;--line:#e4e4df;--a:#2a6fdb;--b:#d9822b;--c:#2f9e6e}
+@media(prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#ecece8;--mute:#9a9a94;--line:#2e2e2b;--a:#6aa0f5;--b:#f0a04e;--c:#5fc79a}}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:8px 0 16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.tile,.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile b{display:block;font-size:22px}.tile span{color:var(--mute);font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px}
+@media(max-width:480px){.grid{grid-template-columns:1fr}}
+.card h2{font-size:14px;margin:0 0 8px;color:var(--mute);font-weight:600}
+.bar{display:flex;gap:8px;margin-bottom:12px}
+button{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 12px;cursor:pointer}
+button.on{border-color:var(--a);color:var(--a)}
+#review{white-space:pre-wrap}
+</style></head><body><main>
+<h1>Ludos</h1>
+<div class="tiles" id="tiles"></div>
+<div class="card" style="margin-bottom:12px"><h2>Daily review <span id="rdate"></span></h2><div id="review">No review yet.</div></div>
+<div class="bar"><button data-p="day">Daily</button><button data-p="week" class="on">Weekly</button><button data-p="month">Monthly</button></div>
+<div class="grid">
+<div class="card"><h2>Distance (km)</h2><canvas id="km"></canvas></div>
+<div class="card"><h2>Pace (min/km) and avg HR</h2><canvas id="pace"></canvas></div>
+<div class="card"><h2>Elevation (m) and longest run (km)</h2><canvas id="elev"></canvas></div>
+<div class="card"><h2>Weight (kg), 7-day average</h2><canvas id="weight"></canvas></div>
+<div class="card"><h2>Resting HR and HRV</h2><canvas id="rhr"></canvas></div>
+<div class="card"><h2>Sleep (h) and body battery</h2><canvas id="sleep"></canvas></div>
+</div></main>
+<script>
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const get=u=>fetch(u).then(r=>r.json());
+const charts={};
+const roll=(a,n=7)=>a.map((_,i)=>{const w=a.slice(Math.max(0,i-n+1),i+1).filter(v=>v!=null);return w.length?+(w.reduce((x,y)=>x+y,0)/w.length).toFixed(1):null});
+function draw(id,type,labels,sets){
+  charts[id]?.destroy();
+  charts[id]=new Chart(document.getElementById(id),{type,data:{labels,datasets:sets.map((s,i)=>({
+    borderColor:css(['--a','--b','--c'][i]),backgroundColor:css(['--a','--b','--c'][i]),pointRadius:0,borderWidth:2,tension:.25,yAxisID:s.y||'y',...s}))},
+    options:{interaction:{mode:'index',intersect:false},plugins:{legend:{display:sets.length>1}},
+      scales:{y:{grid:{color:css('--line')}},y1:{display:sets.some(s=>s.y==='y1'),position:'right',grid:{display:false}},x:{ticks:{maxTicksLimit:8},grid:{display:false}}}}});
+}
+async function load(period){
+  const since={day:90,week:365,month:3650}[period];
+  const d=new Date();d.setDate(d.getDate()-since);const s=d.toISOString().slice(0,10);
+  const r=await get(`/api/rollup?period=${period}&since=${s}`),L=r.map(x=>x.period);
+  draw('km','bar',L,[{label:'km',data:r.map(x=>x.km)}]);
+  draw('pace','line',L,[{label:'pace',data:r.map(x=>x.pace_min_km)},{label:'avg HR',data:r.map(x=>x.avg_hr),y:'y1'}]);
+  draw('elev','bar',L,[{label:'elevation m',data:r.map(x=>x.elevation_m)},{label:'longest km',data:r.map(x=>x.longest_km),type:'line',y:'y1'}]);
+}
+(async()=>{
+  const o=await get('/api/overview'),ld=o.latest_daily||{};
+  const t=[['Last 7 days',o.week_km+' km'],['Ramp vs prev 4w',o.ramp_pct==null?'n/a':o.ramp_pct+'%'],
+    ['Weight (7d avg)',o.weight_kg?o.weight_kg+' kg':'n/a'],['4w change',o.weight_change_4w==null?'n/a':o.weight_change_4w+' kg'],
+    ['Resting HR',ld.resting_hr??'n/a'],['HRV',ld.hrv_ms??'n/a']];
+  tiles.innerHTML=t.map(([k,v])=>`<div class="tile"><span>${k}</span><b>${v}</b></div>`).join('');
+  const rv=await get('/api/review');if(rv){review.textContent=rv.text;rdate.textContent=rv.date}
+  const w=await get('/api/weight');
+  draw('weight','line',w.map(x=>x.date),[{label:'7d avg',data:w.map(x=>x.avg7)},{label:'raw',data:w.map(x=>x.weight_kg),borderWidth:1,borderDash:[3,3]}]);
+  const dd=new Date();dd.setDate(dd.getDate()-120);
+  const dl=await get('/api/daily?since='+dd.toISOString().slice(0,10)),X=dl.map(x=>x.date);
+  draw('rhr','line',X,[{label:'resting HR (7d)',data:roll(dl.map(x=>x.resting_hr))},{label:'HRV (7d)',data:roll(dl.map(x=>x.hrv_ms)),y:'y1'}]);
+  draw('sleep','line',X,[{label:'sleep h (7d)',data:roll(dl.map(x=>x.sleep_s&&x.sleep_s/3600))},{label:'battery max (7d)',data:roll(dl.map(x=>x.body_battery_max)),y:'y1'}]);
+  load('week');
+})();
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-p]').forEach(x=>x.classList.toggle('on',x===b));load(b.dataset.p)});
+</script></body></html>
